@@ -31,6 +31,9 @@ class Config:
     # 最大上传文件大小
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
+    # 允许上传的文件扩展名（仅图片类型，防止上传恶意脚本）
+    UPLOAD_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+
     # 上传目录（相对于项目根目录 static/uploads/）
     UPLOAD_FOLDER = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),

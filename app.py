@@ -1,28 +1,38 @@
 """
-用户信息管理系统 - 完整安全加固版本（修复 SQL 注入 + 统一存储 + 密码加密）
+用户信息管理系统 - 完整安全加固版本
 =======================================================================
 修复内容：
-  1. 密码哈希存储（werkzeug.security）
-  2. 密码永不传递到前端
-  3. 强随机 Secret Key（config.py 管理）
-  4. Session 安全加固（HttpOnly, SameSite, 过期时间）
-  5. 登录频率限制（flask-limiter）
-  6. CSRF 保护（Flask-WTF）
-  7. 统一模糊错误提示（防用户名枚举）
-  8. 输入校验与长度限制
-  9. 关闭 Debug 模式（生产环境）
-  10. 日志记录安全事件
-  --- 以下为第二阶段新增修复 ---
-  11. SQL 注入修复：注册功能使用参数化查询
-  12. SQL 注入修复：搜索功能使用参数化查询
-  13. 密码加密存储到 SQLite（原明文存储）
-  14. 统一用户存储架构（SQLite 替代双存储）
-  15. 模板继承统一（修复重复导航栏）
-  16. 数据库 Schema 完善（role/balance 字段）
+  第一阶段 - 基础安全加固：
+    1. 密码哈希存储（werkzeug.security）
+    2. 密码永不传递到前端
+    3. 强随机 Secret Key（config.py 管理）
+    4. Session 安全加固（HttpOnly, SameSite, 过期时间）
+    5. 登录频率限制（flask-limiter）
+    6. CSRF 保护（Flask-WTF）
+    7. 统一模糊错误提示（防用户名枚举）
+    8. 输入校验与长度限制
+    9. 关闭 Debug 模式（生产环境）
+    10. 日志记录安全事件
+
+  第二阶段 - SQL 注入修复 + 统一存储：
+    11. SQL 注入修复：注册功能使用参数化查询
+    12. SQL 注入修复：搜索功能使用参数化查询
+    13. 密码加密存储到 SQLite（原明文存储）
+    14. 统一用户存储架构（SQLite 替代双存储）
+    15. 模板继承统一（修复重复导航栏）
+    16. 数据库 Schema 完善（role/balance 字段）
+
+  第三阶段 - 文件上传安全加固（2026-07-21）：
+    17. 文件扩展名白名单（仅允许图片类型）
+    18. 文件名净化（防路径遍历攻击）
+    19. 文件内容魔数校验（确保真实图片文件）
+    20. 用户标识前缀（防文件覆盖攻击）
+    21. 禁用 SVG/HTML 上传（防 XSS 攻击）
 """
 import logging
 import sqlite3
 import os
+import secrets
 from datetime import timedelta
 
 from flask import (
@@ -48,6 +58,7 @@ csrf = CSRFProtect(app)
 # 上传配置
 app.config["MAX_CONTENT_LENGTH"] = Config.MAX_CONTENT_LENGTH
 UPLOAD_FOLDER = Config.UPLOAD_FOLDER
+UPLOAD_ALLOWED_EXTENSIONS = Config.UPLOAD_ALLOWED_EXTENSIONS
 
 # 登录频率限制
 limiter = Limiter(
@@ -354,11 +365,67 @@ def search_users(keyword: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 头像上传
+# 头像上传 — 安全加固版
 # ---------------------------------------------------------------------------
+# 常见图片格式的魔数（Magic Bytes）签名，用于验证文件真实性
+IMAGE_MAGIC_BYTES = {
+    b"\x89PNG\r\n\x1a\n":              "png",
+    b"\xff\xd8\xff":                    "jpg/jpeg",
+    b"GIF87a":                          "gif",
+    b"GIF89a":                          "gif",
+    b"RIFF":                            "webp",  # WEBP 以 RIFF 开头
+    b"BM":                              "bmp",
+}
+
+
+def allowed_file_extension(filename: str) -> bool:
+    """
+    ✅ 安全修复 V-22：文件扩展名白名单校验
+    仅允许图片格式（.png/.jpg/.jpeg/.gif/.webp/.bmp）
+    """
+    if "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower()
+    return ext in UPLOAD_ALLOWED_EXTENSIONS
+
+
+def validate_image_content(file_bytes: bytes) -> bool:
+    """
+    ✅ 安全修复 V-22：文件内容魔数校验
+    读取文件头部字节与已知图片格式签名比对，确保文件是真实的图片
+    """
+    return any(file_bytes.startswith(sig) for sig in IMAGE_MAGIC_BYTES)
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    ✅ 安全修复 V-23：文件名净化（防路径遍历）
+    - 移除路径分隔符（防 ../../../ 攻击）
+    - 只取文件名部分，去除所有目录信息
+    """
+    # 只取 basename，移除所有路径信息
+    safe_name = os.path.basename(filename)
+    # 移除空字节和不可见字符
+    safe_name = "".join(c for c in safe_name if c.isprintable() and c not in ('/', '\\', '\x00'))
+    return safe_name
+
+
+def safe_upload_path(upload_dir: str, username: str, filename: str) -> tuple[str, str]:
+    """
+    ✅ 安全修复 V-24：生成安全的存储文件名（防文件覆盖）
+    添加用户标识 + 随机串前缀，防止不同用户上传同名文件互相覆盖
+    """
+    safe_name = sanitize_filename(filename)
+    random_suffix = secrets.token_hex(4)  # 8字符随机十六进制
+    ext = safe_name.rsplit(".", 1)[1].lower() if "." in safe_name else ""
+    base = safe_name.rsplit(".", 1)[0] if "." in safe_name else safe_name
+    stored_name = f"{username}_{base}_{random_suffix}.{ext}"
+    return os.path.join(upload_dir, stored_name), stored_name
+
+
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
-    """用户头像上传 — 需要登录"""
+    """用户头像上传 — 安全加固版本"""
     username = session.get("username")
     if not username:
         return redirect("/login")
@@ -372,25 +439,51 @@ def upload():
         if file.filename == "":
             return render_template("upload.html", error="未选择文件")
 
-        # 使用用户上传的原始文件名保存（不做任何检查或重命名）
         original_filename = file.filename
 
-        # 确保上传目录存在
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        # ✅ 安全修复 V-22：扩展名白名单校验
+        if not allowed_file_extension(original_filename):
+            logger.warning(
+                "User '%s' attempted to upload disallowed file type: %s",
+                username, original_filename,
+            )
+            return render_template(
+                "upload.html",
+                error="不支持的文件类型，仅允许上传图片文件（PNG/JPG/GIF/WEBP/BMP）",
+            )
 
-        # 保存文件到 static/uploads/
-        save_path = os.path.join(UPLOAD_FOLDER, original_filename)
+        # ✅ 安全修复 V-22：文件内容魔数校验
+        file_bytes = file.read(12)  # 读取前12字节用于魔数判断
+        if not validate_image_content(file_bytes):
+            logger.warning(
+                "User '%s' uploaded file with invalid content (not a real image): %s",
+                username, original_filename,
+            )
+            return render_template(
+                "upload.html",
+                error="文件内容不是有效的图片格式，请上传真实图片文件",
+            )
+
+        # ✅ 安全修复 V-24 + V-23：生成安全的存储文件名
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        save_path, stored_name = safe_upload_path(UPLOAD_FOLDER, username, original_filename)
+
+        # 写入文件（魔数校验后重置文件指针 + 写完整内容）
+        file.seek(0)
         file.save(save_path)
 
         # 构造可访问的 URL
-        file_url = url_for("static", filename=f"uploads/{original_filename}")
-        logger.info("User '%s' uploaded file: %s", username, original_filename)
+        file_url = url_for("static", filename=f"uploads/{stored_name}")
+        logger.info(
+            "User '%s' uploaded image: %s (stored as: %s)",
+            username, original_filename, stored_name,
+        )
 
         return render_template(
             "upload.html",
             success="文件上传成功",
             file_url=file_url,
-            filename=original_filename,
+            filename=stored_name,
         )
 
     return render_template("upload.html")
