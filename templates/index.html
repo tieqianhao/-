@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>首页 - 用户管理系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">用户管理系统</div>
+        <div class="nav-menu">
+            {% if username %}
+            <span class="nav-welcome">欢迎，{{ username }}</span>
+            <a href="/logout" class="nav-link">退出</a>
+            {% else %}
+            <a href="/login" class="nav-link">登录</a>
+            <a href="/register" class="nav-link">注册</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <main class="container">
+        {% if username %}
+        <!-- 用户信息卡片 -->
+        <div class="card">
+            <h2>欢迎回来，{{ username }}！</h2>
+            <table class="info-table">
+                <tr>
+                    <td class="label">用户名</td>
+                    <td>{{ user.username }}</td>
+                </tr>
+                <tr>
+                    <td class="label">邮箱</td>
+                    <td>{{ user.email }}</td>
+                </tr>
+                <tr>
+                    <td class="label">手机</td>
+                    <td>{{ user.phone }}</td>
+                </tr>
+                <tr>
+                    <td class="label">角色</td>
+                    <td>{{ user.role }}</td>
+                </tr>
+                <tr>
+                    <td class="label">余额</td>
+                    <td>{{ user.balance }}</td>
+                </tr>
+            </table>
+            <div style="display: flex; gap: 10px; margin-top: 16px;">
+                <a href="/upload" class="btn">上传头像</a>
+                <a href="/logout" class="btn btn-danger">退出登录</a>
+            </div>
+        </div>
+
+        <!-- 搜索功能 -->
+        <div class="card" style="margin-top: 20px;">
+            <h2>用户搜索</h2>
+            <form method="GET" action="/">
+                <div class="form-group">
+                    <label for="keyword">搜索关键词</label>
+                    <input type="text" id="keyword" name="keyword" class="form-input"
+                           placeholder="输入用户名或邮箱搜索" value="{{ search_keyword or '' }}">
+                </div>
+                <button type="submit" class="btn">搜索</button>
+            </form>
+
+            {% if search_keyword %}
+            <div style="margin-top: 20px;">
+                <h3>搜索结果：{{ search_keyword }}</h3>
+                {% if search_results %}
+                <table class="search-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>邮箱</th>
+                            <th>手机</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in search_results %}
+                        <tr>
+                            <td>{{ row.id }}</td>
+                            <td>{{ row.username }}</td>
+                            <td>{{ row.email }}</td>
+                            <td>{{ row.phone }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="no-result">无搜索结果</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        {% else %}
+        <!-- 未登录状态 -->
+        <div class="card">
+            <h2>请先登录</h2>
+            <p>您需要登录后才能查看用户信息。</p>
+            <a href="/login" class="btn">前往登录</a>
+            <a href="/register" class="btn" style="margin-left: 10px;">注册账号</a>
+        </div>
+        {% endif %}
+    </main>
+</body>
+</html>

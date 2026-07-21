@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}上传头像 - 用户管理系统{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>上传头像</h2>
+    <form method="POST" action="/upload" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label for="file">选择头像文件</label>
+            <input type="file" id="file" name="file" class="form-input" style="padding: 8px;">
+        </div>
+        {% if error %}
+        <div class="error-msg">{{ error }}</div>
+        {% endif %}
+        <button type="submit" class="btn">上传</button>
+    </form>
+
+    {% if success and file_url %}
+    <div style="margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+        <div class="success-msg">{{ success }}</div>
+        <div style="text-align: center; margin: 20px 0;">
+            <img src="{{ file_url }}" alt="头像预览"
+                 style="max-width: 200px; max-height: 200px; border-radius: 8px;
+                        border: 2px solid #e0e0e0; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        </div>
+        <div style="text-align: center;">
+            <p style="color: #666; font-size: 14px; margin-bottom: 8px;">文件名：{{ filename }}</p>
+            <p style="word-break: break-all;">
+                <a href="{{ file_url }}" target="_blank" class="btn" style="font-size: 13px; padding: 8px 16px;">
+                    查看原图
+                </a>
+            </p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
