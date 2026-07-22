@@ -28,6 +28,12 @@
     19. 文件内容魔数校验（确保真实图片文件）
     20. 用户标识前缀（防文件覆盖攻击）
     21. 禁用 SVG/HTML 上传（防 XSS 攻击）
+
+  第四阶段 - 个人中心与充值安全加固（2026-07-22）：
+    22. 身份绑定修复：profile/recharge 从 session 读取用户身份（防 IDOR V-27）
+    23. 金额正数校验：禁止负数/零充值（防恶意扣款 V-28）
+    24. 操作人身份锁定：recharge 仅操作当前登录用户（防越权充值 V-29）
+    25. 充值审计日志：记录每次余额变动详情
 """
 import logging
 import sqlite3
@@ -212,6 +218,27 @@ def get_user_by_username(username: str) -> dict | None:
 def get_safe_user_info(username: str) -> dict | None:
     """返回用户信息（排除敏感字段），供模板使用"""
     user = get_user_by_username(username)
+    if user is None:
+        return None
+    return {k: v for k, v in user.items() if k not in SENSITIVE_FIELDS}
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    """根据 ID 查询用户"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def get_safe_user_by_id(user_id: int) -> dict | None:
+    """返回用户信息（排除敏感字段），通过 ID 查询"""
+    user = get_user_by_id(user_id)
     if user is None:
         return None
     return {k: v for k, v in user.items() if k not in SENSITIVE_FIELDS}
@@ -490,6 +517,81 @@ def upload():
 
 
 # ---------------------------------------------------------------------------
+# 个人中心 — 安全加固版（修复 IDOR V-27）
+# ---------------------------------------------------------------------------
+@app.route("/profile", methods=["GET"])
+def profile():
+    """
+    个人中心 — ✅ 安全修复 V-27：从 session 读取当前登录用户身份
+    不再接受前端 user_id 参数，彻底杜绝 IDOR 越权查询
+    """
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    user = get_safe_user_info(username)
+    if user is None:
+        return render_template("profile.html", error="用户不存在")
+
+    return render_template("profile.html", user=user)
+
+
+# ---------------------------------------------------------------------------
+# 充值 — 安全加固版（修复 V-28 负数充值 + V-29 越权充值）
+# ---------------------------------------------------------------------------
+@app.route("/recharge", methods=["POST"])
+def recharge():
+    """
+    充值 — ✅ 安全修复 V-27~V-29
+    - 身份从 session 读取，拒绝前端 user_id 参数
+    - amount 仅允许正数，拦截负数/零
+    - 记录完整的审计日志
+    """
+    # ✅ V-27 + V-29 修复：从 session 获取当前登录用户
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    user = get_user_by_username(username)
+    if user is None:
+        return render_template("profile.html", error="用户不存在")
+
+    amount = request.form.get("amount", type=float, default=0)
+
+    # ✅ V-28 修复：金额正数校验
+    if amount <= 0:
+        logger.warning(
+            "Recharge rejected: invalid amount %f for user '%s' from %s",
+            amount, username, request.remote_addr,
+        )
+        return render_template(
+            "profile.html",
+            user=get_safe_user_info(username),
+            error="充值金额必须大于 0",
+        )
+
+    # 执行充值（仅操作当前登录用户）
+    old_balance = user["balance"]
+    new_balance = old_balance + amount
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "UPDATE users SET balance = balance + ? WHERE id = ?",
+        (amount, user["id"]),
+    )
+    conn.commit()
+    conn.close()
+
+    # ✅ 新增审计日志
+    logger.info(
+        "Recharge success: user='%s'(id=%d), amount=+%f, balance: %f → %f, ip=%s",
+        username, user["id"], amount, old_balance, new_balance, request.remote_addr,
+    )
+
+    return redirect("/profile")
+
+
+# ---------------------------------------------------------------------------
 # 错误处理
 # ---------------------------------------------------------------------------
 @app.errorhandler(429)
@@ -505,6 +607,8 @@ def csrf_error_handler(e):
     referrer = request.referrer or ""
     if "/register" in referrer:
         return render_template("register.html", error="会话已过期，请刷新页面重试"), 400
+    if "/profile" in referrer or "/recharge" in referrer:
+        return render_template("profile.html", error="会话已过期，请刷新页面重试"), 400
     return render_template("login.html", error="会话已过期，请刷新页面重试"), 400
 
 
