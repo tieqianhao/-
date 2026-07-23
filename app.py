@@ -592,6 +592,117 @@ def recharge():
 
 
 # ---------------------------------------------------------------------------
+# 动态页面加载 — 安全加固版（修复路径遍历 + LFI + XSS）
+# ---------------------------------------------------------------------------
+PAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages")
+
+# ✅ 安全修复 V-31：页面名称白名单，仅允许预定义的页面
+ALLOWED_PAGES = {"help", "about", "faq", "terms", "privacy"}
+
+# ✅ 安全修复 V-32：安全的 HTML 标签白名单（仅允许基础排版标签）
+SAFE_TAGS_ALLOWED = {"p", "br", "strong", "b", "em", "i", "u", "h2", "h3", "h4",
+                     "ul", "ol", "li", "div", "span", "table", "tr", "td", "th",
+                     "a", "img", "blockquote", "pre", "code", "hr"}
+SAFE_ATTRS_ALLOWED = {"href", "src", "alt", "title", "style", "class", "id",
+                      "target", "rel"}
+
+
+def sanitize_html_content(html_content: str) -> str:
+    """
+    ✅ 安全修复 V-32：HTML 内容净化
+    移除所有不在白名单中的标签和属性，防止 XSS 攻击
+    """
+    import re
+
+    # 移除 <script> 及其内容
+    html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+    # 移除 on* 事件处理器（onclick, onload, onerror 等）
+    html_content = re.sub(r'\son\w+\s*=\s*"[^"]*"', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r"\son\w+\s*=\s*'[^']*'", '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'\son\w+\s*=\s*\w+', '', html_content, flags=re.IGNORECASE)
+    # 移除 javascript: 伪协议
+    html_content = re.sub(r'href\s*=\s*"javascript:[^"]*"', 'href="#', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r"href\s*=\s*'javascript:[^']*'", "href='#'", html_content, flags=re.IGNORECASE)
+    # 移除 <style> 标签
+    html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+    # 移除 <link> 标签
+    html_content = re.sub(r'<link[^>]*>', '', html_content, flags=re.IGNORECASE)
+    # 移除 <meta> 标签
+    html_content = re.sub(r'<meta[^>]*>', '', html_content, flags=re.IGNORECASE)
+    # 移除 <iframe> 标签
+    html_content = re.sub(r'<iframe[^>]*>.*?</iframe>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+    html_content = re.sub(r'<iframe[^>]*>', '', html_content, flags=re.IGNORECASE)
+    # 移除 <embed> <object> <form> <input> 等危险标签
+    for tag in ["embed", "object", "param", "applet", "form", "input", "textarea",
+                "select", "button", "svg", "math", "canvas", "base", "frame", "frameset",
+                "noframes", "xml", "marquee"]:
+        html_content = re.sub(
+            rf'<{tag}[^>]*>.*?</{tag}>', '', html_content, flags=re.DOTALL | re.IGNORECASE
+        )
+        html_content = re.sub(rf'<{tag}[^>]*>', '', html_content, flags=re.IGNORECASE)
+        html_content = re.sub(rf'</{tag}>', '', html_content, flags=re.IGNORECASE)
+
+    return html_content
+
+
+@app.route("/page", methods=["GET"])
+def dynamic_page():
+    """
+    动态页面加载 — ✅ 安全加固版（修复 V-31 路径遍历/LFI + V-32 XSS）
+
+    ✅ V-31 修复：页面名称白名单 + 禁止路径分隔符
+    ✅ V-32 修复：HTML 内容净化（移除危险标签和属性）
+    """
+    name = request.args.get("name", "")
+
+    if not name:
+        return render_template("index.html", page_error="缺少页面名称")
+
+    # ✅ V-31 修复：路径分隔符检测 — 禁止 ../ 和 /
+    if "/" in name or "\\" in name or ".." in name:
+        logger.warning("Page access blocked (path traversal attempt): '%s' from %s",
+                       name, request.remote_addr)
+        return render_template("index.html", page_error="页面名称无效")
+
+    # ✅ V-31 修复：白名单校验 — 仅允许预定义的页面名
+    # 去掉 .html 后缀后再检查白名单
+    page_key = name.replace(".html", "") if name.endswith(".html") else name
+    if page_key not in ALLOWED_PAGES:
+        logger.warning("Page access blocked (not in allowlist): '%s' from %s",
+                       name, request.remote_addr)
+        return render_template("index.html", page_error="页面不存在")
+
+    page_content = None
+
+    # 尝试直接使用传入的名称
+    file_path = os.path.join(PAGES_DIR, name)
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                page_content = f.read()
+        except Exception:
+            page_content = None
+
+    # 如果没找到，尝试加上 .html 后缀
+    if page_content is None:
+        file_path_with_ext = os.path.join(PAGES_DIR, name + ".html")
+        if os.path.exists(file_path_with_ext):
+            try:
+                with open(file_path_with_ext, "r", encoding="utf-8") as f:
+                    page_content = f.read()
+            except Exception:
+                page_content = None
+
+    if page_content is None:
+        return render_template("index.html", page_error="页面不存在")
+
+    # ✅ V-32 修复：HTML 内容净化，移除危险标签和属性
+    safe_content = sanitize_html_content(page_content)
+
+    return render_template("index.html", page_content=safe_content, page_name=page_key)
+
+
+# ---------------------------------------------------------------------------
 # 错误处理
 # ---------------------------------------------------------------------------
 @app.errorhandler(429)
