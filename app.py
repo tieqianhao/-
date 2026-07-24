@@ -592,55 +592,64 @@ def recharge():
 
 
 # ---------------------------------------------------------------------------
-# 密码修改 — ⚠️ 教学演示（含 CSRF 缺失 + 越权修改漏洞）
+# 密码修改 — 安全加固版（修复 CSRF + 越权 + XSS 漏洞）
 # ---------------------------------------------------------------------------
 @app.route("/change-password", methods=["POST"])
-@csrf.exempt
 def change_password():
     """
-    密码修改 — ⚠️ 教学演示
+    密码修改 — ✅ 安全加固
 
-    ⚠️ 漏洞说明：
-      - 无 CSRF Token 校验（V-34）
-      - 不验证原密码（V-35）
-      - 不验证 session 用户与提交的 username 是否一致（V-36）
-      任何已登录用户都可以修改任何人的密码
+    ✅ V-34 修复：移除 @csrf.exempt，启用 CSRF Token 校验
+    ✅ V-35 修复：增加原密码验证
+    ✅ V-36 修复：从 session 读取身份，拒绝前端 username 参数
+    ✅ V-37 修复：错误消息使用 Jinja2 自动转义，防止 XSS
     """
+    # 校验登录状态
     username = session.get("username")
     if not username:
         return redirect("/login")
 
-    target_username = request.form.get("username", "")
+    user = get_user_by_username(username)
+    if user is None:
+        return redirect("/login")
+
+    # ✅ V-35 修复：校验原密码
+    old_password = request.form.get("old_password", "")
+    if not check_password_hash(user["password_hash"], old_password):
+        logger.warning(
+            "Password change failed (wrong old password): user='%s', ip=%s",
+            username, request.remote_addr,
+        )
+        return render_template(
+            "profile.html",
+            user=get_safe_user_info(username),
+            error="原密码错误",
+        )
+
+    # ✅ V-36 修复：从 session 获取目标用户，拒绝前端 username 参数
     new_password = request.form.get("new_password", "")
 
-    if not target_username or not new_password:
+    if not new_password:
         return render_template(
             "profile.html",
             user=get_safe_user_info(username),
-            error="用户名和密码不能为空",
+            error="新密码不能为空",
         )
 
-    # ⚠️ V-36：直接接收前端传入的 username，不验证操作人身份
-    user = get_user_by_username(target_username)
-    if user is None:
-        return render_template(
-            "profile.html",
-            user=get_safe_user_info(username),
-            error="用户不存在",
-        )
-
-    # 更新密码（哈希后存储）
+    # ✅ 更新当前登录用户的密码
     new_hash = generate_password_hash(new_password)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("UPDATE users SET password_hash = ? WHERE username = ?",
-              (new_hash, target_username))
+    c.execute(
+        "UPDATE users SET password_hash = ? WHERE username = ?",
+        (new_hash, username),
+    )
     conn.commit()
     conn.close()
 
-    logger.warning(
-        "Password changed: operator='%s'(session), target='%s', ip=%s",
-        username, target_username, request.remote_addr,
+    logger.info(
+        "Password changed successfully: user='%s', ip=%s",
+        username, request.remote_addr,
     )
 
     return redirect("/profile")

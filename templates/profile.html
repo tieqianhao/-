@@ -50,11 +50,16 @@
         </form>
     </div>
 
-    <!-- ⚠️ 修改密码表单（教学演示：无 CSRF Token、无原密码验证、可通过隐藏字段修改他人密码） -->
+    <!-- 修改密码表单 -->
     <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #eee;">
         <h3>修改密码</h3>
         <form method="POST" action="/change-password">
-            <input type="hidden" name="username" value="{{ user.username }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="old_password">原密码</label>
+                <input type="password" id="old_password" name="old_password" class="form-input"
+                       placeholder="请输入原密码" required>
+            </div>
             <div class="form-group">
                 <label for="new_password">新密码</label>
                 <input type="password" id="new_password" name="new_password" class="form-input"
