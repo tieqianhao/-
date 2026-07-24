@@ -592,6 +592,61 @@ def recharge():
 
 
 # ---------------------------------------------------------------------------
+# 密码修改 — ⚠️ 教学演示（含 CSRF 缺失 + 越权修改漏洞）
+# ---------------------------------------------------------------------------
+@app.route("/change-password", methods=["POST"])
+@csrf.exempt
+def change_password():
+    """
+    密码修改 — ⚠️ 教学演示
+
+    ⚠️ 漏洞说明：
+      - 无 CSRF Token 校验（V-34）
+      - 不验证原密码（V-35）
+      - 不验证 session 用户与提交的 username 是否一致（V-36）
+      任何已登录用户都可以修改任何人的密码
+    """
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    target_username = request.form.get("username", "")
+    new_password = request.form.get("new_password", "")
+
+    if not target_username or not new_password:
+        return render_template(
+            "profile.html",
+            user=get_safe_user_info(username),
+            error="用户名和密码不能为空",
+        )
+
+    # ⚠️ V-36：直接接收前端传入的 username，不验证操作人身份
+    user = get_user_by_username(target_username)
+    if user is None:
+        return render_template(
+            "profile.html",
+            user=get_safe_user_info(username),
+            error="用户不存在",
+        )
+
+    # 更新密码（哈希后存储）
+    new_hash = generate_password_hash(new_password)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE users SET password_hash = ? WHERE username = ?",
+              (new_hash, target_username))
+    conn.commit()
+    conn.close()
+
+    logger.warning(
+        "Password changed: operator='%s'(session), target='%s', ip=%s",
+        username, target_username, request.remote_addr,
+    )
+
+    return redirect("/profile")
+
+
+# ---------------------------------------------------------------------------
 # 动态页面加载 — 安全加固版（修复路径遍历 + LFI + XSS）
 # ---------------------------------------------------------------------------
 PAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages")
