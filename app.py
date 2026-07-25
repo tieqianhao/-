@@ -42,7 +42,7 @@ import secrets
 from datetime import timedelta
 
 from flask import (
-    Flask, render_template, request, redirect, session, abort, url_for
+    Flask, render_template, render_template_string, request, redirect, session, abort, url_for
 )
 from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
@@ -764,6 +764,109 @@ def dynamic_page():
     safe_content = sanitize_html_content(page_content)
 
     return render_template("index.html", page_content=safe_content, page_name=page_key)
+
+
+_NAVBAR_TPL = '''
+        <div class="nav-brand">用户管理系统</div>
+        <div class="nav-menu">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/welcome" class="nav-link">欢迎页</a>
+            <a href="/feedback" class="nav-link">反馈</a>
+            {% if session_username %}
+            <span class="nav-welcome">欢迎，{{ session_username }}</span>
+            <a href="/profile" class="nav-link">个人中心</a>
+            <a href="/upload" class="nav-link">上传头像</a>
+            <a href="/logout" class="nav-link">退出</a>
+            {% else %}
+            <a href="/login" class="nav-link">登录</a>
+            <a href="/register" class="nav-link">注册</a>
+            {% endif %}
+        </div>'''
+
+
+_PAGE_HEAD = '''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>'''
+_PAGE_MID = '''</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">'''
+_PAGE_TAIL = '''    </nav>
+    <main class="container">
+'''
+_PAGE_END = '''    </main>
+</body>
+</html>'''
+
+
+# ---------------------------------------------------------------------------
+# 个性化页面 — /welcome (修复后：无 SSTI 漏洞)
+# ---------------------------------------------------------------------------
+@app.route("/welcome")
+def welcome():
+    """
+    欢迎页 — ✅ 安全版本：模板固定，用户数据通过变量传入
+    """
+    name = request.args.get("name", "").strip()
+    if not name:
+        name = "亲爱的用户"
+
+    navbar = _NAVBAR_TPL
+    html = (
+        _PAGE_HEAD + "欢迎页" + _PAGE_MID + navbar + _PAGE_TAIL +
+        "<h1>欢迎你，{{ name }}！</h1>\n" +
+        _PAGE_END
+    )
+    return render_template_string(html, name=name, session_username=session.get("username"))
+
+
+# ---------------------------------------------------------------------------
+# 个性化页面 — /feedback (修复后：无 SSTI 漏洞)
+# ---------------------------------------------------------------------------
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    """
+    反馈页 — ✅ 安全版本：模板固定，用户数据通过变量传入
+    """
+    navbar = _NAVBAR_TPL
+    session_username = session.get("username")
+
+    if request.method == "POST":
+        name = request.form.get("name", "")
+        message = request.form.get("message", "")
+        html = (
+            _PAGE_HEAD + "反馈结果" + _PAGE_MID + navbar + _PAGE_TAIL +
+            "<h2>{{ name }} 的反馈：</h2>\n" +
+            "<p>{{ message }}</p>\n" +
+            '<p><a href="/feedback" class="btn">返回</a></p>\n' +
+            _PAGE_END
+        )
+        return render_template_string(html, name=name, message=message, session_username=session_username)
+
+    # GET: 显示反馈表单
+    html = (
+        _PAGE_HEAD + "用户反馈" + _PAGE_MID + navbar + _PAGE_TAIL +
+        '''<h2>用户反馈</h2>
+<form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-group">
+        <label for="name">姓名：</label>
+        <input type="text" id="name" name="name" class="form-control" placeholder="请输入您的姓名">
+    </div>
+    <div class="form-group">
+        <label for="message">留言内容：</label>
+        <textarea id="message" name="message" class="form-control" rows="5" placeholder="请输入您的留言..."></textarea>
+    </div>
+    <button type="submit" class="btn">提交反馈</button>
+</form>
+''' +
+        _PAGE_END
+    )
+    return render_template_string(html, session_username=session_username)
 
 
 # ---------------------------------------------------------------------------
