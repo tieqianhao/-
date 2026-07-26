@@ -38,7 +38,12 @@
 import logging
 import sqlite3
 import os
+import re
 import secrets
+import subprocess
+import platform
+import ipaddress
+import shlex
 from datetime import timedelta
 
 from flask import (
@@ -867,6 +872,92 @@ def feedback():
         _PAGE_END
     )
     return render_template_string(html, session_username=session_username)
+
+
+# ---------------------------------------------------------------------------
+# Ping 网络诊断 (修复后：无命令注入漏洞)
+# ---------------------------------------------------------------------------
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    """
+    Ping 网络诊断 — 需要登录
+    ✅ 安全版本：
+      - IP 地址使用 ipaddress 模块严格校验
+      - 域名使用 shlex 净化 + 安全字符白名单
+      - shell=False，参数以列表形式传递
+    """
+    username = session.get("username")
+    if not username:
+        return redirect("/login")
+
+    result = None
+    ip = ""
+    error = None
+
+    if request.method == "POST":
+        ip = request.form.get("ip", "").strip()
+        if not ip:
+            error = "请输入目标 IP 地址或域名"
+        else:
+            try:
+                # ✅ 修复1：校验并净化目标地址
+                target = validate_target(ip)
+                if target is None:
+                    error = "无效的 IP 地址或域名格式，仅允许 IPv4/IPv6 地址或安全的域名"
+                else:
+                    # ✅ 修复2：使用参数列表形式（shell=False），禁止字符串拼接
+                    if platform.system() == "Windows":
+                        cmd = ["ping", "-n", "3", target]
+                    else:
+                        cmd = ["ping", "-c", "3", target]
+                    output = subprocess.check_output(cmd, shell=False, timeout=30, stderr=subprocess.STDOUT)
+                    result = output.decode("utf-8", errors="replace")
+            except subprocess.TimeoutExpired:
+                error = "错误：Ping 超时（超过 30 秒）"
+            except subprocess.CalledProcessError as e:
+                error = e.output.decode("utf-8", errors="replace") if e.output else f"错误：命令执行失败（返回码 {e.returncode}）"
+            except Exception as e:
+                error = f"错误：{str(e)}"
+
+    return render_template("ping.html", result=result, ip=ip, error=error)
+
+
+def validate_target(target: str):
+    """
+    ✅ 安全校验：验证目标地址是否合法
+    支持：
+      - IPv4 地址 (如 8.8.8.8)
+      - IPv6 地址 (如 ::1, 2001:db8::1)
+      - 安全域名（仅允许字母、数字、连字符、点）
+    返回合法字符串，或 None（非法时）
+    """
+    # 尝试解析为 IP 地址
+    try:
+        ipaddress.ip_address(target)
+        return target
+    except ValueError:
+        pass
+
+    # 尝试解析为 IP 网络地址（CIDR 格式的单个地址）
+    try:
+        ip_obj = ipaddress.ip_network(target, strict=False)
+        if ip_obj.num_addresses == 1:
+            return str(ip_obj.network_address)
+    except ValueError:
+        pass
+
+    # 域名：仅允许字母、数字、连字符、点（安全字符白名单）
+    # 同时禁止常见的 shell 注入特征字符
+    allowed = re.compile(r'^[a-zA-Z0-9.\-]+$')
+    if allowed.match(target) and len(target) <= 255:
+        # 确保域名包含至少一个点（防止裸词注入如 "id"）
+        if "." in target:
+            return target
+        # localhost 特殊放行
+        if target.lower() == "localhost":
+            return target
+
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Ping 测试{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Ping 网络诊断</h2>
+    <p>输入 IP 地址或域名进行网络连通性测试</p>
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group" style="display: flex; gap: 10px; align-items: center;">
+            <label for="ip" style="white-space: nowrap;">目标地址：</label>
+            <input type="text" id="ip" name="ip" class="form-input" style="flex: 1; font-family: monospace;"
+                   placeholder="例如：127.0.0.1 或 8.8.8.8" value="{{ ip or '' }}" autofocus>
+            <button type="submit" class="btn" style="font-family: monospace;">Ping</button>
+        </div>
+    </form>
+
+    {% if result is not none %}
+    <hr style="margin: 20px 0;">
+    <h3>执行结果：</h3>
+    <pre class="ping-output">{{ result }}</pre>
+    {% endif %}
+
+    {% if error %}
+    <hr style="margin: 20px 0;">
+    <h3>错误信息：</h3>
+    <pre class="ping-output" style="color: #ff4444;">{{ error }}</pre>
+    {% endif %}
+</div>
+
+<style>
+    .ping-output {
+        background: #1a1a1a;
+        color: #00ff00;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 14px;
+        padding: 16px;
+        border-radius: 6px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        line-height: 1.6;
+        max-height: 500px;
+        overflow-y: auto;
+        border: 1px solid #333;
+        box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.05);
+    }
+</style>
+{% endblock %}
