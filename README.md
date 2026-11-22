@@ -82,7 +82,7 @@
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/tieqianhao/-.git
-cd user-mgmt-security
+cd ./-
 
 # 2. 安装依赖
 pip install -r requirements.txt
